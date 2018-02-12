@@ -1,0 +1,134 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Summary:
+response measure is an estimate of song dissimilarity between two birds. 
+within each of three populations, we have these estimates of all pairwise combinations.
+We are testing for an effect of population (fixed effect) on a set of these song parameter distances (e.g. frequency modulation, entropy).
+
+
+##MWM
+Okay so first lets load and take a look at the data 
+
+```{r}
+path<-"~/Documents/Projects/Domestication"
+dat=read.table(paste(path,"KL_forPCAandMMAv4.txt",sep="/"),sep = "\t",header=TRUE)
+str(dat)
+
+require(ggplot2)
+print(ggplot(dat,aes(x=Population,y=entropy))+geom_boxplot())
+
+```
+
+Lets look at the means with nonparametric bootstrapped confidence intervals to see what the pattern is
+
+```{r}
+print(ggplot(dat,aes(x=Population,y=entropy))+stat_summary(fun.data=mean_cl_boot,size=.5,na.rm=T))
+```
+
+
+We treat template as a random effect to account for multiple targets being measured against the same template bird
+
+```{r}
+require(lme4)
+m1 <- lmer(entropy ~ Population + (1 | Template) + (1 | batch) , data = dat, REML = FALSE) 
+VarCorr(m1) # Check for singularity
+plot(m1) # residuals plot
+qqnorm(resid(m1)); qqline(resid(m1)) #qqplot
+
+```
+Examine the data range
+
+```{r}
+range(dat$entropy)
+```
+
+Since the data are > and < 1 so we will not do log transformation. 
+
+So we are kinda screwed with regards to good distribution models.  We could fit Gamma errors but that gets complicated. Lets just do the log transform and see if we get any problems.
+
+```{r}
+print(ggplot(dat,aes(x=Population,y=log(entropy)))+geom_boxplot())
+
+```
+
+Doesnt look as though we get any estreme outliers as is caused when values are very close to zero...so lets try the analysis again.
+
+```{r}
+m2 <- lmer(log(entropy) ~ Population + (1 | Template) , data = dat, REML = FALSE) 
+VarCorr(m2) # Check for singularity
+plot(m2) # residuals plot
+qqnorm(resid(m2)); qqline(resid(m2)) #qqplot
+
+```
+
+Shit seems to mess up the lower tail...but I think neitehr the transformed or undtrasnformed patterns are too aggregious...but I would be inclined to go with the untransformed fits!
+
+now we can test whether there is a population effect.
+
+```{r}
+m3 <- lmer(entropy ~ 1 + (1 | Template) , data = dat, REML = FALSE) 
+anova(m1,m3)
+
+
+```
+
+So there is a significant population effect!!!
+
+Lets load a cheesy little function for extracting the predictions and CIs for plotting.
+
+```{r}
+easyPredCInorm <- function(model,newdata,alpha=0.05) {
+    ## baseline prediction, on the linear predictor scale:
+    pred0 <- predict(model,re.form=NA,newdata=newdata)
+    ## fixed-effects model matrix for new data
+    X <- model.matrix(formula(model,fixed.only=TRUE)[-2],
+                   newdata)
+    beta <- fixef(model) ## fixed-effects coefficients
+    V <- vcov(model)     ## variance-covariance matrix of beta
+    pred.se <- sqrt(diag(X %*% V %*% t(X))) ## std errors of predictions
+    ## identity link
+    linkinv <- I
+    ## construct 95% Normal CIs on the log scale and
+    ##  transform back to the response (probability) scale:
+    crit <- -qnorm(alpha/2)
+    linkinv(cbind(lwr=pred0-crit*pred.se,
+                  upr=pred0+crit*pred.se))
+}
+
+```
+
+
+Now we can extract model predicted means and confidence intervals and draw a pretty picture.
+
+```{r}
+summary(m1)
+
+dat$predicted=(predict(m1,re.form=NA))
+pframe <- data.frame(Population=dat$Population)
+dat$LCI=as.vector((easyPredCInorm(m1,pframe))[,1])
+dat$UCI=as.vector((easyPredCInorm(m1,pframe))[,2])
+#str(dat)
+ggplot(dat,aes(x=Population,y=predicted))+geom_point(size=4)+geom_errorbar(aes(ymin=LCI,ymax=UCI),
+                  width=0.4,
+                  size=0.5)+
+  ylab("entropy (KL-Distance)")+xlab("Population")+theme_bw()+  
+  theme(axis.title=element_text(vjust=1,size=16,face="bold"), axis.text=element_text(size=14),
+  axis.text.x = element_text(vjust=0.65, hjust=0.5, size=14), panel.border =  
+  element_rect(colour = "black",size=1.25)) + theme(axis.ticks.length=unit(0.3,"cm"))+   
+  theme(panel.grid.major = element_blank(), panel.grid.minor =element_blank(), axis.line = 
+    element_line(colour = "black"))
+
+ggsave("entropy-Rplot.pdf", plot=last_plot(), device=NULL, path=NULL, scale=1, width=NA, height=NA, dpi=300, limitsize=TRUE)
+
+```
+
+
+library(effects)
+library (lmerTest)
+difflsmeans(m1, test.effs = "Population")
+plot(Effect(c("Population"),m3))
+
+lsmeansLT(m1, adjust = "tukey")
