@@ -64,7 +64,7 @@ qqnorm(resid(m2)); qqline(resid(m2)) #qqplot
 
 ```
 
-Shit seems to mess up the lower tail...but I think neitehr the transformed or undtrasnformed patterns are too aggregious...but I would be inclined to go with the untransformed fits!
+Hmm seems to mess up the lower tail...but I think neitehr the transformed or undtransformed patterns are too eggregious...but I would be inclined to go with the untransformed fits!
 
 now we can test whether there is a population effect.
 
