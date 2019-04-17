@@ -1,0 +1,284 @@
+---
+title: "Song Variability Analysis"
+author: "Chris Balakrishnan & Mike McCoy"
+date: "12/10/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+Here we are going to analyze patters of variability is song structure among zebra finch populations. We are going to focus on an analysis of a summary statistic, PC1, derived from the log transformed raw K-L distances. We begin by testing for variation among two domesticated populations of T. guttata castanotis (TGC) [ECU and Chigago], on wild-derived population of TGC (Macquarie University) and one population of T. guttata guttata (TGG; ECU).
+
+```{r}
+path<-"~/Documents/Projects/Domestication/OpenBiology/PopulationEffect"
+dat=read.table(paste(path,"logKL_4pops_PCA.txt",sep="/"),sep = "\t",header=TRUE)
+str(dat)
+
+require(ggplot2)
+print(ggplot(dat,aes(x=Population,y=PC1))+geom_boxplot())
+```
+
+Since KL-distance is a pairwise measurement between two individual birds, we need to deal with the non-independence inherent in the data. TO do this, we will analyze the data using generalized linear mixed models. Each KL measurement includes a "template" and a "target" and we will treat each of these as nested random effects in the model. 
+
+We've opted to use bayesian mixed models to avoid singularity issues we were having with standard lmer models. 
+
+```{r}
+require(lme4)
+library(blme)
+
+mPC1 <- blmer(PC1 ~ Population + (1 |Population/Template) + (1 | Population/Target), data = dat, REML = FALSE) 
+summary(mPC1)
+VarCorr(mPC1) # Check for singularity
+plot(mPC1) # residuals plot
+qqnorm(resid(mPC1)); qqline(resid(mPC1)) #qqplot
+
+#check blmer
+```
+
+We can see above that we don't have an 0 estimates on our error terms. The residuals plot also looks pretty good as does the q-q plot. The lower tail isn't perfect, but overall this is not too bad.
+
+So now let us fit a null model, removing Population as a fixed factor.
+
+```{r}
+mNull <- blmer(PC1 ~ 1 + (1 |Population/Template) + (1 | Population/Target), data = dat, REML = FALSE) 
+VarCorr(mPC1) # Check for singularity
+plot(mPC1) # residuals plot
+qqnorm(resid(mPC1)); qqline(resid(mPC1)) #qqplot
+```
+Now lets compare the models using ANOVA
+```{r}
+anova(mPC1,mNull)
+```
+
+So there is a significant population effect!!!
+
+Lets load a cheesy little function for extracting the predictions and CIs for plotting.
+
+```{r}
+easyPredCInorm <- function(model,newdata,alpha=0.05) {
+    ## baseline prediction, on the linear predictor scale:
+    pred0 <- predict(model,re.form=NA,newdata=newdata)
+    ## fixed-effects model matrix for new data
+    X <- model.matrix(formula(model,fixed.only=TRUE)[-2],
+                   newdata)
+    beta <- fixef(model) ## fixed-effects coefficients
+    V <- vcov(model)     ## variance-covariance matrix of beta
+    pred.se <- sqrt(diag(X %*% V %*% t(X))) ## std errors of predictions
+    ## identity link
+    linkinv <- I
+    ## construct 95% Normal CIs on the log scale and
+    ##  transform back to the response (probability) scale:
+    crit <- -qnorm(alpha/2)
+    linkinv(cbind(lwr=pred0-crit*pred.se,
+                  upr=pred0+crit*pred.se))
+}
+```
+
+
+Now we can extract model predicted means and confidence intervals and draw a pretty picture.
+
+```{r}
+
+dat$predicted=(predict(mPC1,re.form=NA))
+pframe <- data.frame(Population=dat$Population)
+dat$LCI=as.vector((easyPredCInorm(mPC1,pframe))[,1])
+dat$UCI=as.vector((easyPredCInorm(mPC1,pframe))[,2])
+
+ggplot(dat,aes(x=Population,y=predicted))+geom_point(size=4)+geom_errorbar(aes(ymin=LCI,ymax=UCI),
+                  width=0.4,
+                  size=0.5)+
+    ylab("PC1 (KL-Distance)")+xlab("Population")+theme_bw() +
+  theme(axis.title=element_text(vjust=1,size=16,face="bold"), axis.text=element_text(size=14),
+  axis.text.x = element_text(vjust=0.65, hjust=0.5, size=14), panel.border =  
+  element_rect(colour = "black",size=1.25)) + theme(axis.ticks.length=unit(0.3,"cm"))+   
+  theme(panel.grid.major = element_blank(), panel.grid.minor =element_blank(), axis.line = 
+    element_line(colour = "black"))
+
+#ggsave("PC1-Rplotv_4Pop_Nested.pdf", plot=last_plot(), device=NULL, path=NULL, scale=1, width=NA, height=NA, dpi=300, limitsize=TRUE)
+
+```
+
+Having demonstrated an overall effect of Population on song variability. We now want to explore this in more detail. As far as we can tell, post hoc tests are not supported for blme, but readers surely will want to know if there is significant variation withing TGC, namely between domesticated an wild. So we drop the Timors from the dataset and run this again.
+
+```{r}
+dat2=read.table(paste(path,"logKL_3pops_PCA.txt",sep="/"),sep = "\t",header=TRUE)
+str(dat2)
+print(ggplot(dat2,aes(x=Population,y=PC1))+geom_boxplot())
+```
+lets build some models
+```{r}
+mPC1.3pop <- blmer(PC1 ~ Domesticated + (1 |Population/Template) + (1 | Population/Target), data = dat2, REML = FALSE) 
+VarCorr(mPC1.3pop) # Check for singularity
+plot(mPC1.3pop) # residuals plot
+qqnorm(resid(mPC1.3pop)); qqline(resid(mPC1.3pop)) #qqplot
+
+```
+
+```{r}
+mPC1.3popNull <- blmer(PC1 ~ 1 + (1 |Population/Template) + (1 | Population/Target), data = dat2, REML = FALSE) 
+VarCorr(mPC1.3popNull) # Check for singularity
+plot(mPC1.3popNull) # residuals plot
+qqnorm(resid(mPC1.3popNull)); qqline(resid(mPC1.3popNull)) #qqplot
+```
+Note that the estimated errors are quite large here, likely do to the small number of levels within the "Population" variabe in the random factors.  
+
+```{r}
+anova(mPC1.3popNull,mPC1.3pop)
+
+```
+
+Ok, so a model including "domesticated" as a fixed effect is not better than the null model. 
+
+Lastly, we also want to directly compare the two subspecies. This is not strictly a post-hoc test in this case. Here we are able to incorporate additional data. For each of the two subspecies, TGG and TGC we have a small sample of additional data from the UIUC. This data allows to determine whether the low variability observed above has been stable over time/across populations. 
+```{r}
+path<-"~/Documents/Projects/Domestication/OpenBiology/Subspecies"
+dat3=read.table(paste(path,"logKL_TvA_PCA.txt",sep="/"),sep = "\t",header=TRUE)
+str(dat3)
+
+require(ggplot2)
+print(ggplot(dat3,aes(x=batchpop,y=PC1))+geom_boxplot())
+```
+Superficially, we can clearly see that TGG is low variability in both populations. 
+Lets test. 
+
+```{r}
+mPC1.TvA<- blmer(PC1 ~ batchpop + (1 | batchpop/Template) +  (1 | batchpop/Target), data = dat3, REML = FALSE) 
+
+VarCorr(mPC1.TvA) # Check for singularity
+plot(mPC1.TvA) # residuals plot
+qqnorm(resid(mPC1.TvA)); qqline(resid(mPC1.TvA)) #qqplot
+```
+
+```{r}
+mPC1.TvA.null <- blmer(PC1 ~ 1 + (1 | batchpop/Template) + (1 | batchpop/Target), data = dat3, REML = FALSE) 
+VarCorr(mPC1.TvA.null) # Check for singularity
+plot(mPC1.TvA.null) # residuals plot
+qqnorm(resid(mPC1.TvA.null)); qqline(resid(mPC1.TvA.null)) #qqplot
+```
+
+```{r}
+anova(mPC1.TvA,mPC1.TvA.null)
+```
+
+```{r}
+dat3$predicted=(predict(mPC1.TvA,re.form=NA))
+pframe <- data.frame(batchpop=dat3$batchpop)
+dat3$LCI=as.vector((easyPredCInorm(mPC1.TvA,pframe))[,1])
+dat3$UCI=as.vector((easyPredCInorm(mPC1.TvA,pframe))[,2])
+
+ggplot(dat3,aes(x=batchpop,y=predicted))+geom_point(size=4)+geom_errorbar(aes(ymin=LCI,ymax=UCI),
+                  width=0.4,
+                  size=0.5)+
+    ylab("PC1 (KL-Distance)")+xlab("Population")+theme_bw() +
+  theme(axis.title=element_text(vjust=1,size=16,face="bold"), axis.text=element_text(size=14),
+  axis.text.x = element_text(vjust=0.65, hjust=0.5, size=14), panel.border =  
+  element_rect(colour = "black",size=1.25)) + theme(axis.ticks.length=unit(0.3,"cm"))+   
+  theme(panel.grid.major = element_blank(), panel.grid.minor =element_blank(), axis.line = 
+    element_line(colour = "black"))
+
+#ggsave("PC1-RplotTvA_4pop.pdf", plot=last_plot(), device=NULL, path=NULL, scale=1, width=NA, height=NA, dpi=300, limitsize=TRUE)
+```
+
+Now, the last model we wish to run deals with comparing TGC and TGG finches that were experimentally tutored by Bengalese finches. We first examine KL distances to tutors.
+
+```{r}
+path<-"~/Documents/Projects/Domestication/"
+KLtoTutors=read.table(paste(path, "XfostKLtoTutors_PCAscores.txt",sep="/"),sep = "\t",header=TRUE)
+str(KLtoTutors)
+require(ggplot2)
+print(ggplot(KLtoTutors,aes(x=Population,y=PC1))+geom_boxplot())
+```
+Ok, clearly not much exciting goin on here... but we should probably do stats anyway. Here Template is the Bengalese Finch Tutor
+
+```{r}
+mKLtoTutor <- blmer(PC1 ~ Population + (1 | Template), data = KLtoTutors, REML = FALSE) 
+VarCorr(mKLtoTutor) # Check for singularity
+plot(mKLtoTutor) # residuals plot
+qqnorm(resid(mKLtoTutor)); qqline(resid(mKLtoTutor)) #qqplot
+```
+```{r}
+mKLtoTutorNull <- blmer(PC1 ~ 1 + (1 | Template), data = KLtoTutors, REML = FALSE) 
+VarCorr(mKLtoTutorNull) # Check for singularity
+plot(mKLtoTutorNull) # residuals plot
+qqnorm(resid(mKLtoTutorNull)); qqline(resid(mKLtoTutorNull)) #qqplot
+```
+stats!
+```{r}
+anova(mKLtoTutor,mKLtoTutorNull)
+```
+
+as predicted, no difference here. but lets plot anyway.
+
+```{r}
+KLtoTutors$predicted=(predict(mKLtoTutor,re.form=NA))
+pframe <- data.frame(Population=KLtoTutors$Population)
+KLtoTutors$LCI=as.vector((easyPredCInorm(mKLtoTutor,pframe))[,1])
+KLtoTutors$UCI=as.vector((easyPredCInorm(mKLtoTutor,pframe))[,2])
+
+ggplot(KLtoTutors,aes(x=Population,y=predicted))+geom_point(size=4)+geom_errorbar(aes(ymin=LCI,ymax=UCI),
+                  width=0.4,
+                  size=0.5)+
+    ylab("PC1 (KL-Distance)")+xlab("Population")+theme_bw() +
+  theme(axis.title=element_text(vjust=1,size=16,face="bold"), axis.text=element_text(size=14),
+  axis.text.x = element_text(vjust=0.65, hjust=0.5, size=14), panel.border =  
+  element_rect(colour = "black",size=1.25)) + theme(axis.ticks.length=unit(0.3,"cm"))+   
+  theme(panel.grid.major = element_blank(), panel.grid.minor =element_blank(), axis.line = 
+    element_line(colour = "black"))
+
+#ggsave("PC1-KLxFosterWithin.pdf", plot=last_plot(), device=NULL, path=NULL, scale=1, width=NA, height=NA, dpi=300, limitsize=TRUE)
+```
+
+
+
+
+so the last thing we need to do is examine variability within the sets of birds that have been cross fostered.
+
+```{r}
+path<-"~/Documents/Projects/Domestication/OpenBiology/KLafterTutoring"
+KLxfost=read.table(paste(path,"XfostPairwiseWithinPops2.txt",sep="/"),sep = "\t",header=TRUE)
+str(KLxfost)
+require(ggplot2)
+print(ggplot(KLxfost,aes(x=Population,y=PC1))+geom_boxplot())
+```
+So here again we see a very similar pattern as weas described for the non cross fostered birds.
+```{r}
+mPC1xFost <- blmer(PC1 ~ Population + (1 | Template) + (1 | Target) , data = KLxfost, REML = FALSE) 
+VarCorr(mPC1xFost) # Check for singularity
+plot(mPC1xFost) # residuals plot
+qqnorm(resid(mPC1xFost)); qqline(resid(mPC1xFost)) #qqplot
+```
+```{r}
+mPC1xFostNull <- blmer(PC1 ~ 1 + (1 | Template)+ (1 | Target), data = KLxfost, REML = FALSE) 
+VarCorr(mPC1xFostNull) # Check for singularity
+plot(mPC1xFostNull) # residuals plot
+qqnorm(resid(mPC1xFostNull)); qqline(resid(mPC1xFostNull)) #qqplot
+```
+stats!
+```{r}
+anova(mPC1xFostNull, mPC1xFost)
+```
+```{r}
+KLxfost$predicted=(predict(mPC1xFost,re.form=NA))
+pframe <- data.frame(Population=KLxfost$Population)
+KLxfost$LCI=as.vector((easyPredCInorm(mPC1xFost,pframe))[,1])
+KLxfost$UCI=as.vector((easyPredCInorm(mPC1xFost,pframe))[,2])
+
+ggplot(KLxfost,aes(x=Population,y=predicted))+geom_point(size=4)+geom_errorbar(aes(ymin=LCI,ymax=UCI),
+                  width=0.4,
+                  size=0.5)+
+    ylab("PC1 (KL-Distance)")+xlab("Population")+theme_bw() +
+  theme(axis.title=element_text(vjust=1,size=16,face="bold"), axis.text=element_text(size=14),
+  axis.text.x = element_text(vjust=0.65, hjust=0.5, size=14), panel.border =  
+  element_rect(colour = "black",size=1.25)) + theme(axis.ticks.length=unit(0.3,"cm"))+   
+  theme(panel.grid.major = element_blank(), panel.grid.minor =element_blank(), axis.line = 
+    element_line(colour = "black"))
+
+#ggsave("PC1-KLxFosterWithin.pdf", plot=last_plot(), device=NULL, path=NULL, scale=1, width=NA, height=NA, dpi=300, limitsize=TRUE)
+```
+
